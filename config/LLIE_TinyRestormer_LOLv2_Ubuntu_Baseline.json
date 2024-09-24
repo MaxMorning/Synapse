@@ -1,0 +1,132 @@
+{
+    "name": "LLIE_TinyRestormer_LOLv2_Ubuntu_Baseline",
+    "seed" : 1951581,
+    "log_level": "INFO",
+
+    "path": {
+        "base_dir": "experiments",
+        "code": "code",
+        "log_file": "run.log",
+        "metric_csv": "metric.csv",
+        "tensorboard_log_dir": "tf-logs",
+        "checkpoint": "checkpoint",
+        "resume_state": null
+    },
+
+    "speed_up": {
+        "enable_amp": false,
+        "fast_eval": false,
+        "ena_tf32": false
+    },
+
+    "datasets": {
+        "which_dataset": {
+            "train_dataset": {
+                "name": ["data.low_light_dataset", "LOLv2PairedDataset"],
+                "args":{
+                    "paired_path": "/home/morning/DiskF/TestCode/AI/LLIE/Retinol/train_data/paired",
+                    "image_size": 192
+                }
+            },
+            "valid_datasets": {
+                "LOLv2": {
+                    "name": [
+                        "data.low_light_dataset",
+                        "PngEvalLoader"
+                    ],
+                    "args": {
+                        "paired_path": "/home/morning/DiskF/TestCode/AI/LLIE/Retinol/test_data/LOLv2",
+                        "image_list": null
+                    }
+                }
+            }
+        },
+        "dataloader":{
+            "train_args":{
+                "batch_size": 2,
+                "num_workers": 8,
+                "shuffle": true,
+                "pin_memory": true,
+                "drop_last": false
+            },
+            "val_args":{
+                "batch_size": 1,
+                "num_workers": 8,
+                "shuffle": false,
+                "pin_memory": true,
+                "drop_last": false
+            }
+        }
+    },
+
+    "trainer": {
+        "which_trainer": {
+            "name": ["trainer.LowLightTrainer", "LowLightTrainer"],
+            "args": {
+                "optimizer":
+                    {
+                        "name": ["torch.optim", "Adam"],
+                        "args": {
+                            "lr": 2e-4,
+                            "betas": [0.9, 0.999],
+                            "eps": 1e-8,
+                            "weight_decay": 0
+                        }
+                    },
+                "init_method": null
+            }
+        },
+        "which_networks": {
+            "enhance_network":
+                {
+                    "name": [
+                        "arch.Restormer.restormer_arch",
+                        "Restormer"
+                    ],
+                    "args": {
+                        "inp_channels": 3, 
+                        "out_channels": 3, 
+                        "dim": 48,
+                        "num_blocks": [2,3,3,4],
+                        "num_refinement_blocks": 4,
+                        "heads": [1,2,4,8],
+                        "ffn_expansion_factor": 2,
+                        "bias": false,
+                        "LayerNorm_type": "WithBias"
+                    }
+                }
+        },
+        "which_losses": {
+            "supervised_loss": [
+                {
+                    "name": [
+                        "loss.loss",
+                        "CharbonnierLoss"
+                    ],
+                    "args": {
+                        "loss_weight": 1
+                    }
+                }
+            ]
+        },
+        "which_metrics": [
+            "PSNR",
+            "SSIM"
+        ],
+        "watching_metrics": [
+            "LOLv2_PSNR"
+        ]
+    },
+
+    "train": {
+        "n_iter": 80000,
+        "finish_iter": 350,
+        "report_iter": 50,
+        "val_iter": 100,
+        "save_iter": 150,
+
+        "iter_per_optim_step": 1,
+
+        "lr_scheduler": "cosine_annealing"
+    }
+}
