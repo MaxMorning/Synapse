@@ -20,12 +20,12 @@ from util.scheduler import ReproducibleScheduler
 
 
 class BaseTrainer:
-    def __init__(self, networks, train_loader, val_loaders_dict, losses, metrics, optimizer,
+    def __init__(self, networks, train_loaders_dict, valid_loaders_dict, losses, metrics, optimizer,
                  resume_state, init_method, tensorboard_log_dir, options):
         self.network = networks['enhance_network'].cuda()
 
-        self.train_loader = data.InfinityIterator(train_loader)
-        self.val_loaders_dict = val_loaders_dict
+        self.train_loader = data.InfinityIterator(train_loaders_dict['Paired'])
+        self.valid_loaders_dict = valid_loaders_dict
 
         assert len(losses) > 0
         self.loss_function_dict = losses
@@ -65,7 +65,7 @@ class BaseTrainer:
 
         # init current_best_info
         self.current_best_info = {}
-        for val_set_name in self.val_loaders_dict:
+        for val_set_name in self.valid_loaders_dict:
             self.current_best_info[val_set_name] = {}
             for metric_name in self.metrics:
                 self.current_best_info[val_set_name][metric_name] = {
@@ -100,11 +100,25 @@ class BaseTrainer:
                 self.summery_writer.add_scalar('Learning rate', self.scheduler.get_lr(), self.global_step)
 
                 tqdm_bar = tqdm.tqdm(range(0, options['train']['report_iter']), desc='Report {}'.format(self.global_step // options['train']['report_iter']))
-                for _ in tqdm_bar:
-                    self.train_step(options, self.global_step, scaler)
-                    self.global_step += 1
+                if options['phase'] == 'debug':
+                    # debug mode
+                    for _ in tqdm_bar:
+                        self.train_step(options, self.global_step, scaler)
+                        self.global_step += 1
 
-                    prof.step()
+                        prof.step()
+
+                        if self.global_step % options['train']['val_iter'] == 0 and self.global_step != 0:
+                            # val part
+                            logger.info('Validation of iter {} start in debug mode'.format(self.global_step))
+                            self.fr_eval_step(self.global_step, options)
+                            logger.info('Validation of iter {} finish '.format(self.global_step))
+                else:
+                    for _ in tqdm_bar:
+                        self.train_step(options, self.global_step, scaler)
+                        self.global_step += 1
+
+                        prof.step()
                 
                 logger.info('Train of iter {} finish'.format(self.global_step))
                 self.print_loss_per_report_iter()
@@ -171,7 +185,7 @@ class BaseTrainer:
                 'iter': iter_index,
                 'result': {}
             }
-            for eval_set_name, eval_loader in self.val_loaders_dict.items():
+            for eval_set_name, eval_loader in self.valid_loaders_dict.items():
                 eval_metric_result['result'][eval_set_name] = {}
 
                 eval_loader_pbar = tqdm.tqdm(eval_loader)
@@ -321,7 +335,7 @@ class BaseTrainer:
 
     def init_csv(self):
         csv_header = 'iter,'
-        for val_set_name in self.val_loaders_dict:
+        for val_set_name in self.valid_loaders_dict:
             for metric in self.metrics:
                 csv_header += '{}_{},'.format(val_set_name, metric)
 

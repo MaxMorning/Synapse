@@ -6,8 +6,8 @@ from trainer.BaseTrainer import BaseTrainer
 
 
 class LowLightTrainer(BaseTrainer):
-    def __init__(self, networks, train_loader, val_loaders_dict, losses, metrics, optimizer, resume_state, init_method, tensorboard_log_dir, options):
-        super().__init__(networks, train_loader, val_loaders_dict, losses, metrics, optimizer, resume_state, init_method, tensorboard_log_dir, options)
+    def __init__(self, networks, train_loaders_dict, valid_loaders_dict, losses, metrics, optimizer, resume_state, init_method, tensorboard_log_dir, options):
+        super().__init__(networks, train_loaders_dict, valid_loaders_dict, losses, metrics, optimizer, resume_state, init_method, tensorboard_log_dir, options)
 
     def train_step(self, options, iter_index, scaler):
         train_data = next(self.train_loader)
@@ -45,7 +45,6 @@ class LowLightTrainer(BaseTrainer):
                 self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
 
-
     def fr_eval_step(self, iter_index, options):
         self.network.eval()
 
@@ -54,7 +53,7 @@ class LowLightTrainer(BaseTrainer):
                 'iter': iter_index,
                 'result': {}
             }
-            for eval_set_name, eval_loader in self.val_loaders_dict.items():
+            for eval_set_name, eval_loader in self.valid_loaders_dict.items():
                 eval_metric_result['result'][eval_set_name] = {}
 
                 eval_loader_pbar = tqdm.tqdm(eval_loader)

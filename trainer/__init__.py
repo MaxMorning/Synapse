@@ -2,7 +2,7 @@ from loguru import logger
 from util.util import init_obj
 
 
-def create_trainer(options, train_loader, val_loaders_dict):
+def create_trainer(options, train_loaders_dict, valid_loaders_dict):
     """ create trainer """
 
     # set metrics and loss
@@ -27,8 +27,8 @@ def create_trainer(options, train_loader, val_loaders_dict):
     trainer_opt['args'].update(
         {
             'networks': networks,
-            'train_loader': train_loader,
-            'val_loaders_dict': val_loaders_dict,
+            'train_loaders_dict': train_loaders_dict,
+            'valid_loaders_dict': valid_loaders_dict,
             'losses': losses,
             'metrics': metrics,
             'resume_state': options['path']['resume_state'],

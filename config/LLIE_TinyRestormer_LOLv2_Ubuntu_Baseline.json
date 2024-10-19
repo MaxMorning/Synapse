@@ -22,13 +22,22 @@
     "datasets": {
         "which_dataset": {
             "train_dataset": {
-                "name": ["data.low_light_dataset", "LOLv2PairedDataset"],
-                "args":{
-                    "paired_path": "/home/morning/DiskF/TestCode/AI/LLIE/Retinol/train_data/paired",
-                    "image_size": 192
+                "Paired": {
+                    "name": ["data.low_light_dataset", "LOLv2PairedDataset"],
+                    "args": {
+                        "paired_path": "/home/morning/DiskF/TestCode/AI/LLIE/Retinol/train_data/paired",
+                        "image_size": 192
+                    },
+                    "loader_args": {
+                        "batch_size": 2,
+                        "num_workers": 8,
+                        "shuffle": true,
+                        "pin_memory": true,
+                        "drop_last": false
+                    }
                 }
             },
-            "valid_datasets": {
+            "valid_dataset": {
                 "LOLv2": {
                     "name": [
                         "data.low_light_dataset",
@@ -37,24 +46,15 @@
                     "args": {
                         "paired_path": "/home/morning/DiskF/TestCode/AI/LLIE/Retinol/test_data/LOLv2",
                         "image_list": null
+                    },
+                    "loader_args": {
+                        "batch_size": 1,
+                        "num_workers": 8,
+                        "shuffle": false,
+                        "pin_memory": true,
+                        "drop_last": false
                     }
                 }
-            }
-        },
-        "dataloader":{
-            "train_args":{
-                "batch_size": 2,
-                "num_workers": 8,
-                "shuffle": true,
-                "pin_memory": true,
-                "drop_last": false
-            },
-            "val_args":{
-                "batch_size": 1,
-                "num_workers": 8,
-                "shuffle": false,
-                "pin_memory": true,
-                "drop_last": false
             }
         }
     },
@@ -120,10 +120,10 @@
 
     "train": {
         "n_iter": 80000,
-        "finish_iter": 350,
-        "report_iter": 50,
-        "val_iter": 100,
-        "save_iter": 150,
+        "finish_iter": 80000,
+        "report_iter": 400,
+        "val_iter": 800,
+        "save_iter": 16000,
 
         "iter_per_optim_step": 1,
 

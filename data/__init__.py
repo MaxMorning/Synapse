@@ -8,54 +8,39 @@ from functools import partial
 import torch
 
 
-def create_datasets(options):
-    """ loading Dataset() class from given file's name """
-    train_dataset_opt = options['datasets']['which_dataset']['train_dataset']
-    valid_dataset_opt = options['datasets']['which_dataset']['valid_datasets']
-
-    if train_dataset_opt is not None:
-        train_dataset = init_obj(train_dataset_opt, default_file_name='data.dataset', init_type='Dataset')
-        logger.info("Train dataset has {} samples.".format(len(train_dataset)))
-    else:
-        train_dataset = None
-
-    if valid_dataset_opt is not None:
-        val_datasets_dict = {}
-        for name, valid_dataset_opt in valid_dataset_opt.items():
-            val_datasets_dict[name] = init_obj(valid_dataset_opt, default_file_name='data.dataset', init_type='Dataset')
-            logger.info("Valid dataset {} has {} samples.".format(name, len(val_datasets_dict[name])))
-    else:
-        val_datasets_dict = None
-
-    return train_dataset, val_datasets_dict
-
-
 def create_dataloader(options):
-    train_dataloader_args = options['datasets']['dataloader']['train_args']
-    val_dataloader_args = options['datasets']['dataloader']['val_args']
+    train_dataset_args = options['datasets']['which_dataset']['train_dataset']
+    valid_dataset_args = options['datasets']['which_dataset']['valid_dataset']
 
     generator = torch.Generator()
     generator.manual_seed(options['seed'])
 
-    train_dataset, val_datasets_dict = create_datasets(options)
     worker_init_fn = partial(set_seed, gl_seed=options['seed'])
 
-    ''' create dataloader and validation dataloader '''
-    if train_dataset is not None:
-        # paired_sampler = ReproducibleSampler(train_dataset)
-        train_dataloader = DataLoader(train_dataset, worker_init_fn=worker_init_fn, generator=generator, **train_dataloader_args)
-        logger.success('Train Loader Created.')
-    else:
-        train_dataloader = None
+    train_loaders_dict = {}
+    valid_loaders_dict = {}
 
-    val_dataloaders_dict = {}
-    for val_dataset_name, val_dataset_inst in val_datasets_dict.items():
-        # val_sampler = ReproducibleSampler(val_dataset_inst)
-        val_dataloaders_dict[val_dataset_name] = DataLoader(val_dataset_inst, worker_init_fn=worker_init_fn, generator=generator,
-                                                            **val_dataloader_args)
-    logger.success('Valid Loader Created.')
-    return train_dataloader, val_dataloaders_dict
+    for single_train_dataset_name, single_train_dataset_args in train_dataset_args.items():
+        train_loaders_dict[single_train_dataset_name] = create_single_dataloader(single_train_dataset_args, generator, worker_init_fn)
+    logger.success('Train Loader(s) Created.')
 
+    for single_valid_dataset_name, single_valid_dataset_args in valid_dataset_args.items():
+        valid_loaders_dict[single_valid_dataset_name] = create_single_dataloader(single_valid_dataset_args, generator, worker_init_fn)
+    logger.success('Valid Loader(s) Created.')
+
+    return train_loaders_dict, valid_loaders_dict
+
+
+def create_single_dataloader(single_dataset_args, generator, worker_init_fn):
+    dataset = init_obj(single_dataset_args, default_file_name='data.dataset', init_type='Dataset')
+    logger.info("Dataset {} has {} samples.".format(dataset.__class__.__name__, len(dataset)))
+
+    dataloader_args = single_dataset_args['loader_args']
+
+    dataloader = DataLoader(dataset, worker_init_fn=worker_init_fn, generator=generator, **dataloader_args)
+    logger.success('Loader of {} Created.'.format(dataset.__class__.__name__))
+
+    return dataloader
 
 class ReproducibleSampler(Sampler):
     def __init__(self, data_source):

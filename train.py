@@ -28,10 +28,10 @@ def main(main_options):
     logger.add(main_options['path']['log_file'], level=main_options['log_level'])
 
     # set dataloader
-    train_loader, val_loaders_dict = TheData.create_dataloader(main_options)
+    train_loaders_dict, valid_loaders_dict = TheData.create_dataloader(main_options)
 
     # set trainer
-    trainer = TheTrainer.create_trainer(main_options, train_loader, val_loaders_dict)
+    trainer = TheTrainer.create_trainer(main_options, train_loaders_dict, valid_loaders_dict)
 
     # modify options based on different phase
     main_options['path']['profile_path'] = None
