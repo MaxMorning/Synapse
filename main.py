@@ -24,11 +24,13 @@ def main(main_options):
         torch.use_deterministic_algorithms(False)
         logger.warning('Use non deterministic algorithm')
 
-    # set log file
-    logger.add(main_options['path']['log_file'], level=main_options['log_level'])
+    # set log file (only rank0)
+    if TheUtil.is_main_process():
+        logger.add(main_options['path']['log_file'], level=main_options['log_level'])
 
     # set dataloader
-    train_loaders_dict, valid_loaders_dict = TheData.create_dataloader(main_options)
+    is_distributed = main_options['distributed']['enable_fsdp']
+    train_loaders_dict, valid_loaders_dict = TheData.create_dataloader(main_options, is_distributed=is_distributed)
 
     # set trainer
     trainer = TheTrainer.create_trainer(main_options, train_loaders_dict, valid_loaders_dict)
@@ -53,6 +55,14 @@ def main(main_options):
 
 
 if __name__ == '__main__':
+    # Detect distributed environment (torchrun sets RANK, LOCAL_RANK, WORLD_SIZE)
+    if "RANK" in os.environ:
+        local_rank = TheUtil.setup_distributed()
+        logger.info('Distributed training initialized: rank={}, local_rank={}, world_size={}'.format(
+            os.environ['RANK'], local_rank, os.environ['WORLD_SIZE']))
+    else:
+        local_rank = 0
+
     logger.info('Start Execution...')
     # parse args
     parser = argparse.ArgumentParser()
@@ -62,4 +72,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     options = TheUtil.parse_config_json(args)
-    main(options)
+    options['local_rank'] = local_rank
+
+    try:
+        main(options)
+    finally:
+        TheUtil.cleanup_distributed()

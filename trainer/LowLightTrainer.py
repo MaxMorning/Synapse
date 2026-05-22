@@ -1,5 +1,5 @@
 import torch
-from torch.cuda.amp import autocast as autocast
+import torch.distributed as dist
 import tqdm
 
 from trainer.BaseTrainer import BaseTrainer
@@ -12,11 +12,14 @@ class LowLightTrainer(BaseTrainer):
     def train_step(self, options, iter_index, scaler):
         train_data = next(self.train_loader)
 
-        low_input = train_data['input'].cuda()
-        normal_gt = train_data['ground_truth'].cuda()
+        low_input = train_data['input'].to(self.device)
+        normal_gt = train_data['ground_truth'].to(self.device)
 
-        with autocast(options['speed_up']['enable_amp']):
-            output = self.network.train_forward(low_input)
+        fsdp_mp = self._get_fsdp_mixed_precision_enabled(options)
+        use_autocast = options['speed_up']['enable_amp'] and not fsdp_mp
+
+        with torch.amp.autocast('cuda', enabled=use_autocast):
+            output = self.network(low_input)
 
             loss_supervised = self.loss_fn(
                 output,
@@ -28,7 +31,7 @@ class LowLightTrainer(BaseTrainer):
             loss = loss / options['train']['iter_per_optim_step']
 
         # calc gradient and backward
-        if options['speed_up']['enable_amp']:
+        if use_autocast:
             scaler.scale(loss).backward()
         else:
             loss.backward()
@@ -37,7 +40,7 @@ class LowLightTrainer(BaseTrainer):
         # torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=20, norm_type=2)
 
         if iter_index % options['train']['iter_per_optim_step'] == (options['train']['iter_per_optim_step'] - 1):
-            if options['speed_up']['enable_amp']:
+            if use_autocast:
                 scaler.step(self.optimizer)
                 scaler.update()
                 self.optimizer.zero_grad(set_to_none=True)
@@ -48,6 +51,10 @@ class LowLightTrainer(BaseTrainer):
     def fr_eval_step(self, iter_index, options):
         self.network.eval()
 
+        fsdp_mp = self._get_fsdp_mixed_precision_enabled(options)
+        use_autocast_eval = (options['speed_up']['enable_amp'] or options['speed_up']['fast_eval']) and not fsdp_mp
+        use_autocast_metric = options['speed_up']['enable_amp'] and not fsdp_mp
+
         with torch.no_grad():
             eval_metric_result = {
                 'iter': iter_index,
@@ -56,24 +63,24 @@ class LowLightTrainer(BaseTrainer):
             for eval_set_name, eval_loader in self.valid_loaders_dict.items():
                 eval_metric_result['result'][eval_set_name] = {}
 
-                eval_loader_pbar = tqdm.tqdm(eval_loader)
+                eval_loader_pbar = tqdm.tqdm(eval_loader, disable=not self.is_main_process)
                 metrics_result = {}
                 for metric_name in self.metrics:
                     metrics_result[metric_name] = {}
 
                 for val_data in eval_loader_pbar:
                     file_name = val_data['file_name']
-                    low_input = val_data['input'].cuda()
-                    normal_gt = val_data['ground_truth'].cuda()
+                    low_input = val_data['input'].to(self.device)
+                    normal_gt = val_data['ground_truth'].to(self.device)
                     eval_batch_size = low_input.shape[0]
 
-                    with autocast(options['speed_up']['enable_amp'] or options['speed_up']['fast_eval']):
-                        output = self.network.test_forward(
+                    with torch.amp.autocast('cuda', enabled=use_autocast_eval):
+                        output = self.network(
                             low_input
                         )
                         output = torch.clamp(output, 0, 1)
 
-                    with autocast(options['speed_up']['enable_amp']):
+                    with torch.amp.autocast('cuda', enabled=use_autocast_metric):
                         for metric_name, metric in self.metrics.items():
                             for sample_i in range(eval_batch_size):
                                 metric_result = metric(output[sample_i:sample_i + 1], normal_gt[sample_i:sample_i + 1])
@@ -81,10 +88,24 @@ class LowLightTrainer(BaseTrainer):
 
                 eval_metric_result['result'][eval_set_name] = metrics_result
 
-            # log & visualization
-            self.metric_result_log_and_visual(eval_metric_result)
+            # Gather metric results from all ranks
+            if self.is_fsdp:
+                gathered = [None] * dist.get_world_size()
+                dist.all_gather_object(gathered, metrics_result)
+                if self.is_main_process:
+                    merged = {}
+                    for metric_name in self.metrics:
+                        merged[metric_name] = {}
+                        for rank_result in gathered:
+                            merged[metric_name].update(rank_result[metric_name])
+                    metrics_result = merged
 
-            # save best checkpoint
+            # log & visualization (rank0 only)
+            if self.is_main_process:
+                self.metric_result_log_and_visual(eval_metric_result)
+                
             self.check_and_save_best_checkpoint(iter_index, eval_metric_result, options)
 
+        if self.is_fsdp:
+            dist.barrier()
         self.network.train()

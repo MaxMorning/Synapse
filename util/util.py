@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 import numpy as np
 import random
 import json
@@ -14,6 +15,46 @@ from functools import partial
 from PIL import Image
 
 valid_code_dirs = ['arch', 'config', 'data', 'loss', 'metric', 'trainer', 'util']
+
+
+# --------------- Distributed Utils --------------- #
+
+
+def setup_distributed():
+    """Initialize distributed process group. Expects torchrun environment variables."""
+    dist.init_process_group(backend="nccl")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    return local_rank
+
+
+def cleanup_distributed():
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def is_main_process():
+    return not dist.is_initialized() or dist.get_rank() == 0
+
+
+def get_local_rank():
+    if dist.is_initialized():
+        return int(os.environ.get("LOCAL_RANK", 0))
+    return 0
+
+
+def get_default_distributed_config():
+    return {
+        "enable_fsdp": False,
+        "sharding_strategy": "FULL_SHARD",
+        "mixed_precision": None,
+        "activation_checkpointing": False,
+        "forward_prefetch": True,
+        "backward_prefetch": "BACKWARD_PRE",
+        "cpu_offload": False,
+        "sync_module_states": True,
+        "use_orig_params": True,
+    }
 
 
 def set_seed(seed, gl_seed=0):
@@ -141,12 +182,25 @@ def parse_config_json(console_args):
     # if console_args.batch is not None:
     #     opt['datasets'][opt['phase']]['dataloader']['args']['batch_size'] = console_args.batch
 
+    # Fill in default distributed config if not present
+    default_dist = get_default_distributed_config()
+    if 'distributed' not in opt:
+        opt['distributed'] = default_dist
+    else:
+        for k, v in default_dist.items():
+            if k not in opt['distributed']:
+                opt['distributed'][k] = v
+
+    _is_main = is_main_process()
+
     ''' set experiment directory '''
     experiments_root = os.path.join(opt['path']['base_dir'], '{}_{}_{}'.format(console_args.phase, opt['name'], get_timestamp()))
-    make_dirs(experiments_root)
+    if _is_main:
+        make_dirs(experiments_root)
 
     ''' save json '''
-    write_json(opt, '{}/config.json'.format(experiments_root))
+    if _is_main:
+        write_json(opt, '{}/config.json'.format(experiments_root))
 
     ''' change folder relative hierarchy to absolute path'''
     opt['path']['experiments_root'] = experiments_root
@@ -157,18 +211,33 @@ def parse_config_json(console_args):
             if not os.path.isabs(opt['path'][key]):
                 opt['path'][key] = os.path.join(experiments_root, path)
             if key != 'log_file' and key != 'metric_csv':
-                make_dirs(opt['path'][key])
+                if _is_main:
+                    make_dirs(opt['path'][key])
             else:
-                with open(opt['path'][key], 'w'):
-                    pass
+                if _is_main:
+                    with open(opt['path'][key], 'w'):
+                        pass
 
     ''' code backup '''
-    for name in os.listdir('.'):
-        if name in valid_code_dirs:
-            shutil.copytree(name, os.path.join(opt['path']['code'], name),
-                            ignore=shutil.ignore_patterns("*.pyc", "__pycache__"))
-        if '.py' in name or '.sh' in name:
-            shutil.copy(name, opt['path']['code'])
+    if _is_main:
+        for name in os.listdir('.'):
+            if name in valid_code_dirs:
+                shutil.copytree(name, os.path.join(opt['path']['code'], name),
+                                ignore=shutil.ignore_patterns("*.pyc", "__pycache__"))
+            if '.py' in name or '.sh' in name:
+                shutil.copy(name, opt['path']['code'])
+
+    # Synchronize all ranks after rank0 creates directories
+    if dist.is_initialized():
+        dist.barrier()
+        # Non-main ranks create dirs that they may need to access
+        if not _is_main:
+            for key, path in opt['path'].items():
+                if path is None:
+                    continue
+                if 'resume' not in key and 'base' not in key and 'root' not in key:
+                    if key != 'log_file' and key != 'metric_csv':
+                        make_dirs(opt['path'][key])
 
     opt.update({
         'phase': console_args.phase
@@ -200,3 +269,40 @@ def tensor2img(tensor, out_type=np.uint8, min_max=(0, 1)):
 
 def save_tensor_as_png(img_tensor: torch.Tensor, png_path: str, min_max=(0, 1)):
     Image.fromarray(tensor2img(img_tensor, min_max=min_max)).save(png_path)
+
+def load_init_weights(network: torch.nn.Module, init_weights_path: str, strict: str, prefix_to_remove: str = None):
+    if init_weights_path[-3:] == 'pth':
+        # pytorch format
+        weights_dict = torch.load(init_weights_path)
+    else:
+        # safetensors format
+        weights_dict = load_file(init_weights_path)
+
+    if prefix_to_remove:
+        weights_dict = {
+            k[len(prefix_to_remove):]: v
+            for k, v in weights_dict.items()
+            if k.startswith(prefix_to_remove)
+        }
+
+    if strict == 'strict':
+        network.load_state_dict(weights_dict, strict=True)
+    elif strict == 'free':
+        network.load_state_dict(weights_dict, strict=False)
+    elif strict == 'loose':
+        # get parameters and shapes
+        model_state_dict = network.state_dict()
+        model_keys = set(model_state_dict.keys())
+        weights_keys = set(weights_dict.keys())
+
+        # Check that the parameter size in the weight dictionary is consistent with that of the network
+        for key in model_keys.intersection(weights_keys):
+            if model_state_dict[key].shape != weights_dict[key].shape:
+                raise ValueError(f"Size mismatch for parameter '{key}': "
+                                 f"model has shape {model_state_dict[key].shape}, "
+                                 f"but weights_dict has shape {weights_dict[key].shape}")
+
+        # 加载权重，忽略多余的或缺失的键
+        network.load_state_dict(weights_dict, strict=False)
+    else:
+        raise ValueError(f"Invalid strict mode: {strict}")

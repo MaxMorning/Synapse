@@ -1,6 +1,7 @@
 import random
 
 from torch.utils.data import DataLoader, Subset
+from torch.utils.data.distributed import DistributedSampler
 from util.util import init_obj, set_seed
 from loguru import logger
 from torch.utils.data.dataloader import Sampler
@@ -8,7 +9,7 @@ from functools import partial
 import torch
 
 
-def create_dataloader(options):
+def create_dataloader(options, is_distributed=False):
     train_dataset_args = options['datasets']['which_dataset']['train_dataset']
     valid_dataset_args = options['datasets']['which_dataset']['valid_dataset']
 
@@ -21,21 +22,28 @@ def create_dataloader(options):
     valid_loaders_dict = {}
 
     for single_train_dataset_name, single_train_dataset_args in train_dataset_args.items():
-        train_loaders_dict[single_train_dataset_name] = create_single_dataloader(single_train_dataset_args, generator, worker_init_fn)
+        train_loaders_dict[single_train_dataset_name] = create_single_dataloader(
+            single_train_dataset_args, generator, worker_init_fn, is_distributed=is_distributed)
     logger.success('Train Loader(s) Created.')
 
     for single_valid_dataset_name, single_valid_dataset_args in valid_dataset_args.items():
-        valid_loaders_dict[single_valid_dataset_name] = create_single_dataloader(single_valid_dataset_args, generator, worker_init_fn)
+        valid_loaders_dict[single_valid_dataset_name] = create_single_dataloader(
+            single_valid_dataset_args, generator, worker_init_fn, is_distributed=is_distributed)
     logger.success('Valid Loader(s) Created.')
 
     return train_loaders_dict, valid_loaders_dict
 
 
-def create_single_dataloader(single_dataset_args, generator, worker_init_fn):
+def create_single_dataloader(single_dataset_args, generator, worker_init_fn, is_distributed=False):
     dataset = init_obj(single_dataset_args, default_file_name='data.dataset', init_type='Dataset')
     logger.info("Dataset {} has {} samples.".format(dataset.__class__.__name__, len(dataset)))
 
-    dataloader_args = single_dataset_args['loader_args']
+    dataloader_args = dict(single_dataset_args['loader_args'])
+
+    if is_distributed:
+        sampler = DistributedSampler(dataset, shuffle=dataloader_args.get('shuffle', False))
+        dataloader_args['shuffle'] = False
+        dataloader_args['sampler'] = sampler
 
     dataloader = DataLoader(dataset, worker_init_fn=worker_init_fn, generator=generator, **dataloader_args)
     logger.success('Loader of {} Created.'.format(dataset.__class__.__name__))

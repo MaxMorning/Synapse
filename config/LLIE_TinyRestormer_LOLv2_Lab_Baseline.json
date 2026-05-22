@@ -19,6 +19,18 @@
         "ena_tf32": false
     },
 
+    "distributed": {
+        "enable_fsdp": false,
+        "sharding_strategy": "FULL_SHARD",
+        "mixed_precision": null,
+        "activation_checkpointing": false,
+        "forward_prefetch": true,
+        "backward_prefetch": "BACKWARD_PRE",
+        "cpu_offload": false,
+        "sync_module_states": true,
+        "use_orig_params": true
+    },
+
     "datasets": {
         "which_dataset": {
             "train_dataset": {

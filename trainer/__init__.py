@@ -1,5 +1,5 @@
 from loguru import logger
-from util.util import init_obj
+from util.util import init_obj, get_local_rank
 
 
 def create_trainer(options, train_loaders_dict, valid_loaders_dict):
@@ -10,9 +10,12 @@ def create_trainer(options, train_loaders_dict, valid_loaders_dict):
     metric_name_list = [str(item_opt) for item_opt in options['trainer']['which_metrics']]
     metrics = {(metric.__class__.__name__ if metric.__class__.__name__ != 'partial' else metric_name): metric for metric, metric_name in zip(metric_list, metric_name_list)}
 
+    local_rank = options.get('local_rank', 0)
+    loss_device = 'cuda:{}'.format(local_rank)
+
     losses = {}
     for loss_name, loss_content in options['trainer']['which_losses'].items():
-        losses[loss_name] = [create_loss(item_opt) for item_opt in loss_content]
+        losses[loss_name] = [create_loss(item_opt, device=loss_device) for item_opt in loss_content]
 
     # set network
     networks = {}
@@ -46,8 +49,8 @@ def create_metric(metric_opt):
     return init_obj(metric_opt, default_file_name='metric.metric', init_type='Metric')
 
 
-def create_loss(loss_opt):
-    return init_obj(loss_opt, default_file_name='loss.loss', init_type='Loss').to('cuda').eval()
+def create_loss(loss_opt, device='cuda'):
+    return init_obj(loss_opt, default_file_name='loss.loss', init_type='Loss').to(device).eval()
 
 
 def create_network(network_opt, has_grad):

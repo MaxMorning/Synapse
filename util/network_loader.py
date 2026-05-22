@@ -1,4 +1,6 @@
+import os
 import torch
+from util.util import load_init_weights
 
 
 def load_network(network_type, weight_path):
@@ -21,6 +23,10 @@ def load_network(network_type, weight_path):
     else:
         raise NotImplementedError(f'{network_type} is not implemented')
 
-    network.load_state_dict(torch.load(weight_path))
+    if weight_path.endswith('.safetensors'):
+        from safetensors.torch import load_file
+        network.load_state_dict(load_file(weight_path))
+    else:
+        network.load_state_dict(torch.load(weight_path))
 
     return network
